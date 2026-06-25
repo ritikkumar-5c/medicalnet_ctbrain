@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data import CTSeriesDataset, build_transforms  # noqa: E402
 from engine import run_epoch  # noqa: E402
+from losses import build_loss  # noqa: E402
 from models import build_model  # noqa: E402
 from utils import (  # noqa: E402
     balanced_class_weights, compute_metrics, load_config, pick_device,
@@ -139,7 +140,8 @@ def main():
     if tc["class_weighting"] == "balanced":
         weight = torch.tensor(balanced_class_weights(train_rows, n_cls), device=device)
         print(f"Class weights: {weight.tolist()}")
-    criterion = nn.CrossEntropyLoss(weight=weight, label_smoothing=tc["label_smoothing"])
+    criterion = build_loss(tc, n_cls, weight)             # weighted_ce | focal | cost_sensitive
+    print(f"Loss: {tc.get('loss', 'weighted_ce')}")
 
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=tc["lr"], weight_decay=tc["weight_decay"])
@@ -159,12 +161,54 @@ def main():
     best_epoch = -1
     bad_epochs = 0
     history = []
-    frozen = tc["freeze_backbone_epochs"] > 0
-    if frozen:
-        model.freeze_backbone(True)
-        print(f"Backbone frozen for first {tc['freeze_backbone_epochs']} epochs (head warmup)")
+    start_epoch = 0
 
-    for epoch in range(tc["epochs"]):
+    def save_ckpt(path, epoch, metrics):
+        """Save COMPLETE training state so a run can resume bit-for-bit."""
+        import random
+        torch.save({
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict() if scheduler is not None else None,
+            "scaler": scaler.state_dict() if scaler is not None else None,
+            "epoch": epoch, "best": best, "best_epoch": best_epoch, "bad_epochs": bad_epochs,
+            "monitor": monitor, "cfg": cfg, "metrics": metrics, "history": history,
+            "rng": {"python": random.getstate(), "numpy": np.random.get_state(),
+                    "torch": torch.get_rng_state(),
+                    "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None},
+        }, path)
+
+    # Optional full-state resume (model+optimizer+scheduler+scaler+counters+RNG).
+    resume = tc.get("resume") or cfg.get("resume")
+    if resume and os.path.exists(resume):
+        import random
+        ck = torch.load(resume, map_location=device)
+        model.load_state_dict(ck["model"])
+        if ck.get("optimizer"): optimizer.load_state_dict(ck["optimizer"])
+        if ck.get("scheduler") and scheduler is not None: scheduler.load_state_dict(ck["scheduler"])
+        if ck.get("scaler") and scaler is not None: scaler.load_state_dict(ck["scaler"])
+        best = ck.get("best", -1.0); best_epoch = ck.get("best_epoch", -1)
+        bad_epochs = ck.get("bad_epochs", 0); history = ck.get("history", [])
+        start_epoch = int(ck.get("epoch", -1)) + 1
+        rng = ck.get("rng")
+        if rng:
+            try:
+                random.setstate(rng["python"]); np.random.set_state(rng["numpy"])
+                torch.set_rng_state(rng["torch"])
+                if rng.get("cuda") is not None and torch.cuda.is_available():
+                    torch.cuda.set_rng_state_all(rng["cuda"])
+            except Exception as e:
+                print(f"[resume] RNG restore skipped: {e}")
+        print(f"[resume] {resume}: continuing from epoch {start_epoch} (best {monitor}={best:.4f})")
+
+    # Backbone freeze state must reflect where we (re)start, not always epoch 0.
+    freeze_n = tc["freeze_backbone_epochs"]
+    frozen = freeze_n > 0 and start_epoch < freeze_n
+    model.freeze_backbone(frozen)
+    if frozen:
+        print(f"Backbone frozen until epoch {freeze_n} (head warmup)")
+
+    for epoch in range(start_epoch, tc["epochs"]):
         if frozen and epoch == tc["freeze_backbone_epochs"]:
             model.freeze_backbone(False)
             frozen = False
@@ -204,15 +248,15 @@ def main():
                          for c in CLASS_NAMES[:n_cls]))
 
         score = m[monitor]
-        torch.save({"model": model.state_dict(), "cfg": cfg, "epoch": epoch, "metrics": m},
-                   os.path.join(out_dir, "last.pth"))
-        if score > best:
+        improved = score > best
+        if improved:
             best, best_epoch, bad_epochs = score, epoch, 0
-            torch.save({"model": model.state_dict(), "cfg": cfg, "epoch": epoch, "metrics": m},
-                       os.path.join(out_dir, "best.pth"))
-            print(f"      ** new best {monitor}={best:.4f} -> saved best.pth")
         else:
             bad_epochs += 1
+        save_ckpt(os.path.join(out_dir, "last.pth"), epoch, m)   # full state (exact resume)
+        if improved:
+            save_ckpt(os.path.join(out_dir, "best.pth"), epoch, m)
+            print(f"      ** new best {monitor}={best:.4f} -> saved best.pth")
 
         with open(os.path.join(out_dir, "history.json"), "w") as f:
             json.dump(history, f, indent=2)

@@ -31,11 +31,23 @@ train:
   amp: true                      # mixed precision (CUDA)
   grad_clip: 1.0
   freeze_backbone_epochs: 3      # train head only for the first N epochs, then unfreeze
-  class_weighting: balanced      # balanced | none — for the loss
+  class_weighting: balanced      # balanced | none — class weights for the loss
   sampler: weighted              # weighted | none — oversample rare classes
   label_smoothing: 0.05
-  early_stop_patience: 12        # stop if val macro-F1 hasn't improved in N epochs
-  monitor: macro_f1              # macro_f1 | balanced_acc — checkpoint/early-stop metric
+  # loss: weighted_ce | focal | cost_sensitive. cost_sensitive penalizes under-calling
+  # pathology to 'normal' (clinical "don't miss" priority).
+  loss: weighted_ce
+  focal_gamma: 2.0
+  cost_miss_abnormal: 5.0        # cost of true abnormal -> predicted normal (worst miss)
+  cost_miss_near_normal: 3.0     # cost of true near_normal -> predicted normal
+  cost_ce_lambda: 0.3            # blended CE weight (stability) for cost_sensitive
+  early_stop_patience: 12        # stop if monitor hasn't improved in N epochs
+  # checkpoint/early-stop metric (higher=better). balanced_acc (mean per-class recall)
+  # is preferred for "don't miss pathology": rewards recall on all classes, not gameable
+  # by over-calling. options: balanced_acc | macro_f1 | not_normal_sensitivity | accuracy | macro_auc
+  monitor: balanced_acc
+  target_sensitivity: 0.95       # not-normal sensitivity floor for the eval operating point
+  resume: null                   # path to a checkpoint to resume full training state from
   seed: 42
 
 output:
