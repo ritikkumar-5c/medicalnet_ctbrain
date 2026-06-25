@@ -32,9 +32,11 @@ def parse_args():
     ap.add_argument("--config", default="configs/default.yaml")
     # a few common dotted overrides
     for key in ["train.epochs", "train.batch_size", "train.num_workers",
-                "model.depth", "model.pretrained_path", "data.manifest", "output.dir"]:
+                "model.depth", "model.pretrained_path", "data.manifest", "output.dir",
+                "train.loss", "train.monitor", "train.resume"]:
         ap.add_argument(f"--{key}")
     ap.add_argument("--train.lr", dest="train.lr", type=float)
+    ap.add_argument("--train.target_sensitivity", dest="train.target_sensitivity", type=float)
     args, _ = ap.parse_known_args()
     overrides = {k: v for k, v in vars(args).items() if k != "config" and v is not None}
     # cast int-ish overrides
