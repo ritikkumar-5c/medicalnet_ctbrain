@@ -20,3 +20,5 @@ tensorboard>=2.14
 # weight auto-download
 gdown>=5.1
 huggingface_hub>=0.23
+# shared uint8 CT-volume cache (optional fast-path; used when data.cache_manifest is set)
+ctcache @ git+https://github.com/ritikkumar-5c/ctcache.git
