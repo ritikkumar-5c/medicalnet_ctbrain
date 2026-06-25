@@ -1,0 +1,22 @@
+# Core DL (install torch separately with the right CUDA wheel — see setup.sh)
+# torch>=2.1  (installed via setup.sh with CUDA index URL)
+monai>=1.3.0
+pydicom>=2.4
+# DICOM pixel decoders (~10% of our CT series use JPEG-LS / JPEG2000 transfer
+# syntaxes). The pylibjpeg stack below covers JPEG, JPEG-LS and JPEG2000.
+# python-gdcm is an optional extra fallback installed best-effort in setup.sh
+# (it has no wheel on some platforms).
+pylibjpeg>=2.0
+pylibjpeg-libjpeg>=2.0
+pylibjpeg-openjpeg>=2.0
+nibabel>=5.1
+numpy>=1.24
+pandas>=2.0
+scikit-learn>=1.3
+scipy>=1.10
+tqdm>=4.66
+pyyaml>=6.0
+tensorboard>=2.14
+# weight auto-download
+gdown>=5.1
+huggingface_hub>=0.23

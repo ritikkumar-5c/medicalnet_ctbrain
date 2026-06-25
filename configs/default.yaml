@@ -1,0 +1,42 @@
+# MedicalNet CT-brain classifier — default config.
+# Override any field on the CLI, e.g.:  python src/train.py --config configs/default.yaml --epochs 60
+
+data:
+  manifest: data/manifest.csv
+  # Fast path: set to a ctcache cache_manifest.csv to read pre-built uint8 volumes
+  # (already resized+windowed) instead of decoding DICOM every epoch. null = decode DICOM.
+  # Build one with: python -m ctcache.build_cache --splits-dir <splits> --out-root <dir>
+  #                 --size 96 384 384 --windows brain
+  cache_manifest: null
+  min_slices: 10
+  spatial_size: [96, 384, 384]   # (D, H, W) every volume is resized to this
+  windows: ["brain"]             # 1 name -> 1 channel; add "subdural","bone" for multi-channel
+
+model:
+  depth: 34                      # MedicalNet resnet depth: 10/18/34/50
+  num_classes: 3
+  dropout: 0.3
+  pretrained: true
+  pretrained_path: null          # set to a .pth to skip auto-download
+
+train:
+  epochs: 60
+  batch_size: 4
+  num_workers: 8
+  lr: 0.0003
+  weight_decay: 0.0001
+  optimizer: adamw
+  scheduler: cosine              # cosine | plateau | none
+  warmup_epochs: 3
+  amp: true                      # mixed precision (CUDA)
+  grad_clip: 1.0
+  freeze_backbone_epochs: 3      # train head only for the first N epochs, then unfreeze
+  class_weighting: balanced      # balanced | none — for the loss
+  sampler: weighted              # weighted | none — oversample rare classes
+  label_smoothing: 0.05
+  early_stop_patience: 12        # stop if val macro-F1 hasn't improved in N epochs
+  monitor: macro_f1              # macro_f1 | balanced_acc — checkpoint/early-stop metric
+  seed: 42
+
+output:
+  dir: runs/medicalnet_r34
