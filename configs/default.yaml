@@ -10,6 +10,8 @@ data:
   cache_manifest: null
   min_slices: 10
   spatial_size: [96, 384, 384]   # (D, H, W) every volume is resized to this
+  val_interval: 2                # validate (+ checkpoint / early-stop) every N epochs; train-only in
+                                 # between to skip the data-bound val pass (no cache => decode is costly)
   windows: ["brain"]             # 1 name -> 1 channel; add "subdural","bone" for multi-channel
 
 model:
@@ -20,10 +22,10 @@ model:
   pretrained_path: null          # set to a .pth to skip auto-download
 
 train:
-  epochs: 60
-  batch_size: 4
-  num_workers: 8
-  lr: 0.0003
+  epochs: 30                     # pretrained backbone + bigger batch converge fast; was 60
+  batch_size: 4                  # per user: restart from scratch with batch 4
+  num_workers: 4
+  lr: 0.00015                    # 3e-4 -> 1.5e-4: settle the oscillating decision boundary
   weight_decay: 0.0001
   optimizer: adamw
   scheduler: cosine              # cosine | plateau | none
@@ -31,17 +33,18 @@ train:
   amp: true                      # mixed precision (CUDA)
   grad_clip: 1.0
   freeze_backbone_epochs: 3      # train head only for the first N epochs, then unfreeze
-  class_weighting: balanced      # balanced | none — class weights for the loss
+  class_weighting: none          # de-stack rebalancing: keep weighted sampler + cost_sensitive loss,
+                                 # drop class weights (3 rebalancers stacked caused the v1 oscillation)
   sampler: weighted              # weighted | none — oversample rare classes
   label_smoothing: 0.05
   # loss: weighted_ce | focal | cost_sensitive. cost_sensitive penalizes under-calling
   # pathology to 'normal' (clinical "don't miss" priority).
-  loss: weighted_ce
+  loss: cost_sensitive           # clinical "don't-miss" priority (also set on CLI by the watchdog)
   focal_gamma: 2.0
   cost_miss_abnormal: 5.0        # cost of true abnormal -> predicted normal (worst miss)
   cost_miss_near_normal: 3.0     # cost of true near_normal -> predicted normal
   cost_ce_lambda: 0.3            # blended CE weight (stability) for cost_sensitive
-  early_stop_patience: 12        # stop if monitor hasn't improved in N epochs
+  early_stop_patience: 6         # in VALIDATION checks (every val_interval epochs) => ~12 epochs of no gain
   # checkpoint/early-stop metric (higher=better). balanced_acc (mean per-class recall)
   # is preferred for "don't miss pathology": rewards recall on all classes, not gameable
   # by over-calling. options: balanced_acc | macro_f1 | not_normal_sensitivity | accuracy | macro_auc

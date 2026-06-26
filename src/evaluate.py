@@ -29,7 +29,7 @@ def main():
     args = ap.parse_args()
 
     device = pick_device()
-    ckpt = torch.load(args.ckpt, map_location="cpu")
+    ckpt = torch.load(args.ckpt, map_location="cpu", weights_only=False)
     cfg = ckpt["cfg"]
     n_cls = cfg["model"]["num_classes"]
     in_ch = len(cfg["data"]["windows"])

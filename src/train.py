@@ -184,7 +184,7 @@ def main():
     resume = tc.get("resume") or cfg.get("resume")
     if resume and os.path.exists(resume):
         import random
-        ck = torch.load(resume, map_location=device)
+        ck = torch.load(resume, map_location=device, weights_only=False)
         model.load_state_dict(ck["model"])
         if ck.get("optimizer"): optimizer.load_state_dict(ck["optimizer"])
         if ck.get("scheduler") and scheduler is not None: scheduler.load_state_dict(ck["scheduler"])
@@ -196,9 +196,9 @@ def main():
         if rng:
             try:
                 random.setstate(rng["python"]); np.random.set_state(rng["numpy"])
-                torch.set_rng_state(rng["torch"])
+                torch.set_rng_state(rng["torch"].cpu().to(torch.uint8))   # must be CPU ByteTensor
                 if rng.get("cuda") is not None and torch.cuda.is_available():
-                    torch.cuda.set_rng_state_all(rng["cuda"])
+                    torch.cuda.set_rng_state_all([s.cpu().to(torch.uint8) for s in rng["cuda"]])
             except Exception as e:
                 print(f"[resume] RNG restore skipped: {e}")
         print(f"[resume] {resume}: continuing from epoch {start_epoch} (best {monitor}={best:.4f})")
@@ -210,6 +210,10 @@ def main():
     if frozen:
         print(f"Backbone frozen until epoch {freeze_n} (head warmup)")
 
+    # Validate (+ checkpoint / early-stop) every val_interval epochs to skip the
+    # data-bound val pass on the others. Always validate on the final epoch.
+    val_interval = max(1, int(tc.get("val_interval", 1)))
+
     for epoch in range(start_epoch, tc["epochs"]):
         if frozen and epoch == tc["freeze_backbone_epochs"]:
             model.freeze_backbone(False)
@@ -219,16 +223,30 @@ def main():
         tr = run_epoch(model, train_loader, device, criterion, optimizer,
                        scaler=scaler, grad_clip=tc["grad_clip"], train=True,
                        desc=f"train {epoch+1}/{tc['epochs']}")
+
+        # cosine steps once per epoch regardless of whether we validate this epoch.
+        if sched_kind == "epoch":
+            scheduler.step()
+        lr_now = optimizer.param_groups[0]["lr"]
+
+        do_val = (epoch % val_interval == 0) or (epoch == tc["epochs"] - 1)
+        if not do_val:
+            # train-only epoch: log train loss + save last.pth so resume still works.
+            if writer is not None:
+                writer.add_scalar("loss/train", tr["loss"], epoch)
+                writer.add_scalar("lr", lr_now, epoch)
+                writer.flush()
+            print(f"[{epoch+1:3d}] lr={lr_now:.2e} train_loss={tr['loss']:.4f} (no val)")
+            save_ckpt(os.path.join(out_dir, "last.pth"), epoch, {})
+            continue
+
         va = run_epoch(model, val_loader, device, criterion, train=False,
                        desc=f"val   {epoch+1}/{tc['epochs']}")
         m = compute_metrics(va["y_true"], va["y_pred"], va["y_prob"], n_cls)
 
-        if sched_kind == "epoch":
-            scheduler.step()
-        elif sched_kind == "plateau":
+        if sched_kind == "plateau":
             scheduler.step(m[monitor])
 
-        lr_now = optimizer.param_groups[0]["lr"]
         rec = {"epoch": epoch, "lr": lr_now, "train_loss": tr["loss"],
                "val_loss": va["loss"], **m}
         history.append(rec)

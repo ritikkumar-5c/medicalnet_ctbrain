@@ -6,7 +6,7 @@ set -u
 
 CD=/root/ritikkumar/medicalnet_ctbrain
 PY=$CD/.venv/bin/python
-RUN=medicalnet_r34_clinical
+RUN=medicalnet_r34_clinical_v2
 OUT=$CD/runs/$RUN
 TRAIN_LOG=$OUT.log
 WLOG=$OUT.watchdog.log
@@ -38,6 +38,7 @@ while :; do
   "$PY" src/train.py --config configs/default.yaml \
       --output.dir "$OUT" \
       --train.loss cost_sensitive --train.monitor balanced_acc --train.target_sensitivity 0.95 \
+      --train.resume "$OUT/last.pth" \
       >> "$TRAIN_LOG" 2>&1
   code=$?
   log "training exited code=$code"
